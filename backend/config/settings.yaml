@@ -1,0 +1,77 @@
+# ============================================================
+# Edge-AI Performance Autopilot — Configuration
+# ============================================================
+
+# ----------------------------------------------------------
+# Video source
+# ----------------------------------------------------------
+source:
+  type: "camera"            # "camera" | "file"
+  camera_index: 0
+  upload_dir: "./uploads"
+  processing_mode: "paced"  # "benchmark" | "paced"  (file mode only)
+  default_speed: 1.0        # playback speed multiplier (file mode only)
+
+# ----------------------------------------------------------
+# Inference engine
+# ----------------------------------------------------------
+inference:
+  model_path: "yolov8n.pt"
+  model_variant: "yolov8n"     # yolov8n | yolov8s | yolov8m
+  input_size: [640, 640]
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+  device: "auto"               # "auto" | "cuda:0" | "cpu"
+  half_precision: false         # overridden by autopilot if supported
+  backend: "pytorch"            # "pytorch" | "onnx" | "tensorrt"
+
+# ----------------------------------------------------------
+# Telemetry
+# ----------------------------------------------------------
+telemetry:
+  sampling_interval_ms: 500
+  history_size: 120            # rolling window length (~60 s at 500 ms)
+
+# ----------------------------------------------------------
+# Autopilot controller
+# ----------------------------------------------------------
+autopilot:
+  enabled: true
+  mode: "balanced"              # "speed" | "balanced" | "accuracy"
+  cooldown_seconds: 5.0
+  # Escalation thresholds (GPU utilization %)
+  escalate_gpu_threshold: 90
+  deescalate_gpu_threshold: 70
+  # FPS drop triggers
+  escalate_fps_drop_pct: 25     # escalate if FPS drops >25% from baseline
+  deescalate_fps_recovery_pct: 15
+  # Hysteresis — consecutive ticks before state transition
+  escalate_ticks: 3
+  deescalate_ticks: 5
+
+# ----------------------------------------------------------
+# LLM analyst
+# ----------------------------------------------------------
+llm:
+  provider: "ollama"            # "ollama" | "gemini"
+  ollama:
+    endpoint: "http://localhost:11434"
+    model: "auto"           # "auto" | phi3:mini | tinyllama
+    timeout_seconds: 10
+  gemini:
+    api_key: ""                  # set via env GEMINI_API_KEY
+    model: "gemini-2.0-flash"
+  enabled: true
+
+# ----------------------------------------------------------
+# Server
+# ----------------------------------------------------------
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
+    - "https://*.vercel.app"
+  websocket:
+    stream_video: true
+    video_quality: 70            # JPEG quality 1-100
