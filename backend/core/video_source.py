@@ -171,6 +171,23 @@ class VideoSource:
             self._paused = False
             self._last_frame_time = time.perf_counter()
 
+    def step_forward(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """Read exactly one frame forward while paused (file mode only)."""
+        if self._source_type != SourceType.FILE or self._cap is None:
+            return False, None
+        ret, frame = self._cap.read()
+        return ret, frame if ret else (False, None)
+
+    def step_backward(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """Step one frame backward while paused (file mode only)."""
+        if self._source_type != SourceType.FILE or self._cap is None:
+            return False, None
+        current = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES))
+        target = max(0, current - 2)  # -2 because read() advances by 1
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+        ret, frame = self._cap.read()
+        return ret, frame if ret else (False, None)
+
     def seek(self, frame_number: int) -> None:
         """Seek to an absolute frame number (file mode only)."""
         if self._source_type == SourceType.FILE and self._cap:

@@ -38,7 +38,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router as api_router, bind_app_state
 from api.websocket import (
+    broadcast_advisor_suggestion,
     broadcast_decision,
+    broadcast_detection_summary,
     broadcast_llm_explanation,
     broadcast_source_progress,
     broadcast_status,
@@ -46,6 +48,7 @@ from api.websocket import (
     broadcast_video_frame,
     websocket_endpoint,
 )
+from core.advisor import Advisor
 from core.autopilot_controller import AutopilotController
 from core.hardware_profiler import HardwareProfiler
 from core.inference_engine import InferenceEngine, InferenceParams
@@ -79,6 +82,7 @@ class InferencePipeline:
         telemetry: TelemetryMonitor,
         controller: AutopilotController,
         analyst: LLMAnalyst,
+        advisor: Advisor,
         hardware_dict: dict,
         stream_video: bool = True,
         video_quality: int = 70,
@@ -88,6 +92,7 @@ class InferencePipeline:
         self._telemetry = telemetry
         self._controller = controller
         self._analyst = analyst
+        self._advisor = advisor
         self._hardware_dict = hardware_dict
         self._stream_video = stream_video
         self._video_quality = video_quality
@@ -96,6 +101,9 @@ class InferencePipeline:
         self._source = VideoSource()
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._last_result = None
+        self._start_time = 0.0
+        self._generation = 0  # incremented each start(), prevents stale finally from releasing new source
 
     @property
     def video_source(self) -> VideoSource:
@@ -105,6 +113,13 @@ class InferencePipeline:
         """Start the inference pipeline."""
         if self._running:
             self.stop()
+
+        # Wait for the old task to fully finish (including its finally block)
+        if self._task and not self._task.done():
+            try:
+                await asyncio.wait_for(self._task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
 
         # Determine source
         if source == "camera" or source.isdigit():
@@ -121,7 +136,9 @@ class InferencePipeline:
         self._controller.set_benchmark(is_benchmark)
 
         self._running = True
-        self._task = asyncio.create_task(self._loop())
+        self._start_time = time.time()
+        self._generation += 1
+        self._task = asyncio.create_task(self._loop(self._generation))
         logger.info("Pipeline started: source=%s mode=%s", source, processing_mode)
 
     def stop(self) -> None:
@@ -131,77 +148,116 @@ class InferencePipeline:
         self._source.release()
         logger.info("Pipeline stopped.")
 
-    async def _loop(self) -> None:
+    async def _loop(self, generation: int) -> None:
         """Main inference loop — runs until stopped."""
         telemetry_interval = 0.5  # seconds between telemetry broadcasts
         last_telemetry_broadcast = 0.0
 
-        while self._running:
-            # Get next frame
-            ok, frame = self._source.read()
-            if not ok:
-                # If paused, wait and retry - DO NOT BREAK
-                if self._source.is_paused:
-                    await asyncio.sleep(0.1)
+        try:
+            while self._running:
+                # Get next frame
+                ok, frame = self._source.read()
+                if not ok:
+                    # If paused, wait and retry - DO NOT BREAK
+                    if self._source.is_paused:
+                        # Still broadcast progress so frontend knows we're paused
+                        meta = self._source.get_metadata()
+                        if meta and meta.total_frames:
+                            await broadcast_source_progress(
+                                progress=self._source.get_progress(),
+                                frame_number=self._source.get_current_frame_number(),
+                                total_frames=meta.total_frames,
+                                paused=True,
+                            )
+                        await asyncio.sleep(0.1)
+                        continue
+
+                    if self._source.get_metadata() and self._source.get_metadata().source_type.value == "file":
+                        logger.info("End of video file reached.")
+                        
+                        summary = await self._telemetry.get_summary_stats(since_timestamp=self._start_time)
+                        msg = "Video analysis finished."
+                        if summary:
+                            msg += f" Avg FPS: {summary.get('avg_fps')} | GPU: {summary.get('avg_gpu_util')}%"
+
+                        logger.info("Broadcasting completed with stats: %s", summary)
+                        await broadcast_status("completed", msg, extra=summary)
+                        self._running = False
+                        break
+                    await asyncio.sleep(0.01)
                     continue
 
-                if self._source.get_metadata() and self._source.get_metadata().source_type.value == "file":
-                    logger.info("End of video file reached.")
-                    
-                    summary = await self._telemetry.get_summary_stats()
-                    msg = "Video analysis finished."
-                    if summary:
-                        msg += f" Avg FPS: {summary.get('avg_fps')} | GPU: {summary.get('avg_gpu_util')}%"
+                # Run inference
+                result = self._engine.run_frame(frame)
+                self._last_result = result
 
-                    await broadcast_status("completed", msg, extra=summary)
-                    self._running = False
-                    break
-                await asyncio.sleep(0.01)
-                continue
+                # Update telemetry with inference stats
+                stats = self._engine.get_stats()
+                self._telemetry.update_inference_metrics(
+                    fps=stats["fps"],
+                    latency_ms=stats["avg_latency_ms"],
+                )
 
-            # Run inference
-            result = self._engine.run_frame(frame)
+                # Broadcast video frame
+                if self._stream_video and result.annotated_frame is not None:
+                    await broadcast_video_frame(result.annotated_frame, self._video_quality)
 
-            # Update telemetry with inference stats
-            stats = self._engine.get_stats()
-            self._telemetry.update_inference_metrics(
-                fps=stats["fps"],
-                latency_ms=stats["avg_latency_ms"],
-            )
+                # Periodic telemetry + autopilot evaluation
+                now = time.time()
+                if now - last_telemetry_broadcast >= telemetry_interval:
+                    last_telemetry_broadcast = now
 
-            # Broadcast video frame
-            if self._stream_video and result.annotated_frame is not None:
-                await broadcast_video_frame(result.annotated_frame, self._video_quality)
+                    snap = await self._telemetry.get_latest()
+                    if snap:
+                        await broadcast_telemetry(snap.to_dict())
 
-            # Periodic telemetry + autopilot evaluation
-            now = time.time()
-            if now - last_telemetry_broadcast >= telemetry_interval:
-                last_telemetry_broadcast = now
+                        # Autopilot evaluation
+                        decision = self._controller.evaluate(snap)
+                        if decision:
+                            await broadcast_decision(decision.to_dict())
 
-                snap = await self._telemetry.get_latest()
-                if snap:
-                    await broadcast_telemetry(snap.to_dict())
+                            # LLM explanation (fire-and-forget)
+                            asyncio.create_task(self._explain(decision.to_dict()))
 
-                    # Autopilot evaluation
-                    decision = self._controller.evaluate(snap)
-                    if decision:
-                        await broadcast_decision(decision.to_dict())
+                        # Advisor evaluation (always-on insights)
+                        autopilot_info = self._controller.get_state_info()
+                        suggestion = self._advisor.evaluate(snap, autopilot_info)
+                        if suggestion:
+                            await broadcast_advisor_suggestion(
+                                text=suggestion.text,
+                                category=suggestion.category,
+                            )
 
-                        # LLM explanation (fire-and-forget)
-                        asyncio.create_task(self._explain(decision.to_dict()))
+                        # Detection summary
+                        if self._last_result and not self._last_result.skipped:
+                            counts: dict[str, int] = {}
+                            for det in self._last_result.detections:
+                                counts[det.class_name] = counts.get(det.class_name, 0) + 1
+                            await broadcast_detection_summary(counts, len(self._last_result.detections))
 
-                # Source progress (file mode)
-                meta = self._source.get_metadata()
-                if meta and meta.total_frames:
-                    await broadcast_source_progress(
-                        progress=self._source.get_progress(),
-                        frame_number=self._source.get_current_frame_number(),
-                        total_frames=meta.total_frames,
-                        paused=self._source.is_paused,
-                    )
+                    # Source progress (file mode)
+                    meta = self._source.get_metadata()
+                    if meta and meta.total_frames:
+                        await broadcast_source_progress(
+                            progress=self._source.get_progress(),
+                            frame_number=self._source.get_current_frame_number(),
+                            total_frames=meta.total_frames,
+                            paused=self._source.is_paused,
+                        )
 
-            # Yield to the event loop
-            await asyncio.sleep(0)
+                # Yield to the event loop
+                await asyncio.sleep(0)
+
+        except Exception as exc:
+            logger.error("Inference loop crashed: %s", exc, exc_info=True)
+            await broadcast_status("error", f"Inference engine error: {exc}")
+            self._running = False
+        finally:
+            # Only release source if this is still the active generation
+            # (prevents a stale task from releasing a newly-opened source)
+            if self._generation == generation:
+                self._source.release()
+            logger.info("Pipeline loop exited.")
 
     async def _explain(self, decision_dict: dict) -> None:
         try:
@@ -210,8 +266,13 @@ class InferencePipeline:
                 text=text,
                 decision_id=str(decision_dict.get("timestamp", "")),
             )
-        except Exception:
-            logger.exception("LLM explanation failed")
+        except Exception as exc:
+            exc_name = type(exc).__name__
+            if "Timeout" in exc_name or "ReadTimeout" in exc_name:
+                logger.warning("LLM explanation timed out — skipping")
+                await broadcast_status("warning", "LLM timed out – explanation skipped")
+            else:
+                logger.warning("LLM explanation failed: %s", exc_name)
 
 
 # ── Settings Loader ──────────────────────────────────────────────
@@ -253,7 +314,9 @@ async def lifespan(app: FastAPI):
 
     engine = InferenceEngine(device=device)
     model_path = inf_cfg.get("model_path", "yolov8n.pt")
+    await broadcast_status("loading", f"Loading model {model_path}…")
     engine.load_model(model_path)
+    await broadcast_status("ready", "Model loaded successfully")
 
     initial_params = InferenceParams(
         input_size=tuple(inf_cfg.get("input_size", [640, 640])),
@@ -322,11 +385,15 @@ async def lifespan(app: FastAPI):
     upload_dir = src_cfg.get("upload_dir", "./uploads")
     os.makedirs(upload_dir, exist_ok=True)
 
+    # 7. Advisor (always-on insight engine)
+    advisor = Advisor(hardware=hardware, cooldown=30.0)
+
     pipeline = InferencePipeline(
         engine=engine,
         telemetry=telemetry,
         controller=controller,
         analyst=analyst,
+        advisor=advisor,
         hardware_dict=hardware_dict,
         stream_video=ws_cfg.get("stream_video", True),
         video_quality=ws_cfg.get("video_quality", 70),

@@ -113,11 +113,13 @@ class TelemetryMonitor:
                 return list(self._history)
             return list(self._history)[-n:]
 
-    async def get_summary_stats(self) -> dict:
+    async def get_summary_stats(self, since_timestamp: float = 0.0) -> dict:
         """Calculate average metrics over the current history."""
         async with self._lock:
-            snaps = list(self._history)
+            snaps = [s for s in self._history if s.timestamp >= since_timestamp]
         
+        logger.info("Stats calc: history=%d, filtered=%d, since=%.2f", len(self._history), len(snaps), since_timestamp)
+
         if not snaps:
             return {}
         
@@ -126,14 +128,16 @@ class TelemetryMonitor:
         avg_vram = sum(s.vram_used_gb for s in snaps) / count
         avg_fps = sum(s.fps for s in snaps) / count
         avg_cpu = sum(s.cpu_utilization_pct for s in snaps) / count
-        
-        return {
+
+        stats = {
             "avg_fps": round(avg_fps, 1),
             "avg_gpu_util": round(avg_gpu, 1),
             "avg_vram_used_gb": round(avg_vram, 2),
             "avg_cpu_util": round(avg_cpu, 1),
             "duration_sec": round(snaps[-1].timestamp - snaps[0].timestamp, 1)
         }
+        logger.info("Calculated stats: %s", stats)
+        return stats
 
     # ── Internal ─────────────────────────────────────────────────
 

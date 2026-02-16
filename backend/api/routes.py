@@ -168,6 +168,31 @@ async def stop_inference():
     return {"status": "stopped"}
 
 
+class ConfigureRequest(BaseModel):
+    confidence_threshold: float | None = None
+    iou_threshold: float | None = None
+
+
+@router.post("/inference/configure")
+async def configure_inference(body: ConfigureRequest):
+    """Hot-reconfigure inference parameters without restarting."""
+    engine = _get("engine")
+    from core.inference_engine import InferenceParams
+    current = engine.get_current_params()
+
+    new_params = InferenceParams(
+        input_size=tuple(current["input_size"]),
+        confidence_threshold=body.confidence_threshold if body.confidence_threshold is not None else current["confidence_threshold"],
+        iou_threshold=body.iou_threshold if body.iou_threshold is not None else current.get("iou_threshold", 0.45),
+        half_precision=current["half_precision"],
+        backend=current["backend"],
+        process_every_n_frames=current["process_every_n_frames"],
+        model_variant=current["model_variant"],
+    )
+    engine.configure(new_params)
+    return {"status": "configured", "confidence_threshold": new_params.confidence_threshold}
+
+
 # ── Source Management ────────────────────────────────────────────
 
 
@@ -232,6 +257,17 @@ async def playback_control(body: PlaybackRequest):
         source.seek_percent(body.value)
     elif body.action == "speed":
         source.set_speed(body.value)
+    elif body.action in ("step_forward", "step_backward"):
+        import base64, cv2
+        if body.action == "step_forward":
+            ok, frame = source.step_forward()
+        else:
+            ok, frame = source.step_backward()
+        if ok and frame is not None:
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            b64 = base64.b64encode(buf).decode("ascii")
+            return {"status": body.action, "frame": b64}
+        return {"status": body.action, "frame": None}
     else:
         raise HTTPException(400, f"Unknown action: {body.action}")
 

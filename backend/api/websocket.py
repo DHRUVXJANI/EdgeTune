@@ -130,6 +130,28 @@ async def broadcast_llm_explanation(text: str, decision_id: str = "") -> None:
     })
 
 
+async def broadcast_advisor_suggestion(text: str, category: str = "tip") -> None:
+    await manager.broadcast({
+        "type": "advisor_suggestion",
+        "data": {
+            "text": text,
+            "category": category,
+            "timestamp": time.time(),
+        },
+    })
+
+
+async def broadcast_detection_summary(counts: dict, total: int) -> None:
+    await manager.broadcast({
+        "type": "detection_summary",
+        "data": {
+            "counts": counts,
+            "total": total,
+            "timestamp": time.time(),
+        },
+    })
+
+
 async def broadcast_video_frame(
     frame: np.ndarray,
     quality: int = 70,
@@ -169,7 +191,7 @@ async def broadcast_source_progress(
 async def broadcast_status(status: str, message: str, extra: dict = None) -> None:
     data = {"status": status, "message": message}
     if extra:
-        data.update(extra)
+        data["extra"] = extra
     
     await manager.broadcast({
         "type": "status",
