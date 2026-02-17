@@ -37,6 +37,7 @@ An optional **LLM analyst** (via local Ollama or Google Gemini) explains every a
 | **🧠 Dual-Brain Architecture** | **Fast Brain:** YOLOv8 for real-time detection. **Slow Brain:** Local LLM for semantic explanations of system decisions. |
 | **📊 Real-Time Dashboard** | Live GPU, VRAM, FPS, and latency charts streamed over WebSockets at low latency. |
 | **🎛️ Hot-Reconfigurable** | Switch models (YOLOv8n/s/m), change autopilot mode (Speed / Balanced / Accuracy), or upload custom `.pt` models — all without restarting. |
+| **📦 3 Models Included** | YOLOv8n (nano), YOLOv8s (small), and YOLOv8m (medium) are bundled out-of-the-box — no separate downloads needed. |
 | **🎥 Flexible Input** | Webcam feed or uploaded video files with full playback controls (pause, seek, speed). |
 | **📥 Export & Reporting** | Download a CSV report of hardware telemetry, autopilot decisions, and LLM explanations. |
 | **🖥️ Hardware-Aware** | Auto-detects NVIDIA GPUs via `pynvml`, reads VRAM and compute capability, and classifies into performance tiers (Low / Mid / High / CPU-only). Falls back gracefully to CPU. |

@@ -23,18 +23,18 @@ export const api = {
 
     // ── Hardware ──────────────────────────────────────────────────
     getHardware: () =>
-        request<import("./types").HardwareProfile>("/api/hardware"),
+        request<import("./types.ts").HardwareProfile>("/api/hardware"),
 
     // ── Telemetry ─────────────────────────────────────────────────
     getTelemetry: () =>
-        request<import("./types").TelemetrySnapshot>("/api/telemetry"),
+        request<import("./types.ts").TelemetrySnapshot>("/api/telemetry"),
 
     getTelemetryHistory: (n = 60) =>
-        request<import("./types").TelemetrySnapshot[]>(`/api/telemetry/history?n=${n}`),
+        request<import("./types.ts").TelemetrySnapshot[]>(`/api/telemetry/history?n=${n}`),
 
     // ── Autopilot ─────────────────────────────────────────────────
     getAutopilotState: () =>
-        request<import("./types").AutopilotState>("/api/autopilot/state"),
+        request<import("./types.ts").AutopilotState>("/api/autopilot/state"),
 
     setAutopilotMode: (mode: string) =>
         request<{ mode: string }>("/api/autopilot/mode", {
@@ -68,7 +68,7 @@ export const api = {
         request<{ files: string[] }>("/api/source/files"),
 
     getSourceInfo: () =>
-        request<import("./types").SourceMetadata>("/api/source/info"),
+        request<import("./types.ts").SourceMetadata>("/api/source/info"),
 
     playbackControl: (action: string, value = 0) =>
         request<{ action: string; value: number }>("/api/source/playback", {
