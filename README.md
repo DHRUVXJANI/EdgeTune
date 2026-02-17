@@ -220,6 +220,28 @@ EdgeTune auto-discovers available Ollama models at startup. You can also configu
 
 ---
 
+## 📸 Screenshots
+
+### Dashboard with Real-Time Detection
+
+The main dashboard displays live video streams with YOLOv8 object detection overlays, showing confidence scores for detected objects. The interface features real-time performance metrics and a three-panel layout: autopilot decisions on the left, advisor explanations in the center, and analysis data on the right.
+
+![EdgeTune Dashboard - Live Detection Feed](./screenshots/Screenshot%202026-02-17%20105117.png)
+
+### Performance Monitoring & Analytics
+
+Real-time performance charts show GPU utilisation, VRAM usage, latency, and FPS tracking. The system displays historical trends with interactive graphs and provides detailed telemetry alongside autopilot state transitions and LLM-powered explanations of optimization decisions.
+
+![EdgeTune Performance Metrics](./screenshots/Screenshot%202026-02-17%20105057.png)
+
+### Accuracy Mode with Dense Detection
+
+In Accuracy mode, EdgeTune provides maximum detection coverage with comprehensive object identification across the entire frame — detecting multiple object classes simultaneously while maintaining high precision on complex street scenes.
+
+![EdgeTune Accuracy Mode - Comprehensive Detection](./screenshots/Screenshot%202026-02-17%20104658.png)
+
+---
+
 ## ⚙️ Configuration
 
 All settings live in **[`backend/config/settings.yaml`](backend/config/settings.yaml)**.
