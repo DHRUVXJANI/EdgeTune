@@ -13,6 +13,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import cv2
@@ -99,6 +100,10 @@ class InferenceEngine:
         # Pin to device
         if self._device != "auto":
             self._model.to(self._device)
+
+        # Sync model_variant so get_current_params() reflects the actual model
+        variant = Path(model_path).stem  # "yolov8m.pt" → "yolov8m"
+        self._params.model_variant = variant
 
         self._frame_counter = 0
         logger.info("Model loaded successfully.")
